@@ -29,8 +29,10 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import sys
+import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
@@ -1090,7 +1092,84 @@ def print_docs_text(result):
         print("\n✅ PASS — every README is mechanically sound.")
 
 
+# ---------------------------------------------------------------------------
+# SARIF output (SARIF 2.1.0 — see CONVENTIONS.md)
+# ---------------------------------------------------------------------------
+
+def _sarif_level(tier, severity):
+    """Tier CRITICAL/HIGH -> error; native medium -> warning; else note."""
+    if tier in ("CRITICAL", "HIGH"):
+        return "error"
+    if severity == "medium":
+        return "warning"
+    return "note"
+
+
+def _sarif_rule_name(rule_id):
+    return "".join(p.capitalize() for p in re.split(
+        r"[^A-Za-z0-9]+", rule_id) if p) or "Finding"
+
+
+def build_sarif(tagged_findings):
+    """Build a SARIF 2.1.0 log from (uri, finding) pairs — findings
+    themselves carry no file, so the caller tags each with the file it
+    belongs to (the report for `check`, each README for `docs`)."""
+    rules, seen = [], set()
+    results = []
+    for uri, f in tagged_findings:
+        level = _sarif_level(f["tier"], f["severity"])
+        if f["check"] not in seen:
+            seen.add(f["check"])
+            rules.append({
+                "id": f["check"],
+                "name": _sarif_rule_name(f["check"]),
+                "shortDescription": {
+                    "text": f"ClaimCheck check: {f['check']} "
+                            f"({f['category']})"},
+                "defaultConfiguration": {"level": level},
+                "properties": {"severity": f["severity"],
+                               "tier": f["tier"],
+                               "category": f["category"]},
+            })
+        res = {"ruleId": f["check"], "level": level,
+               "message": {"text": f["message"]}}
+        if uri:
+            loc = {"artifactLocation": {"uri": uri}}
+            if f.get("line"):
+                loc["region"] = {"startLine": f["line"]}
+            res["locations"] = [{"physicalLocation": loc}]
+        results.append(res)
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "claimcheck",
+                "version": VERSION,
+                "informationUri":
+                    "https://github.com/maticcretic-commits/claimcheck",
+                "rules": rules,
+            }},
+            "results": results,
+        }],
+    }
+
+
+def _materialize_stdin(suffix, prefix):
+    """Write stdin to a temp file (path-based auditors need a file).
+    Returns the temp path."""
+    fd, name = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(sys.stdin.read())
+    return name
+
+
 def cmd_docs(args):
+    stdin_tmp = None
+    if args.target == "-":
+        # Pipe composability (CONVENTIONS.md): one README from stdin.
+        stdin_tmp = _materialize_stdin(".md", "claimcheck-readme-")
+        args.target = stdin_tmp
     target = Path(args.target)
     if not target.exists():
         _print_error(f"no such file or directory: {target}",
@@ -1132,7 +1211,16 @@ def cmd_docs(args):
         "score": score,
         "verdict": verdict,
     }
-    if args.format == "json":
+    if stdin_tmp:
+        result["target"] = "<stdin>"
+        for r in result["results"]:
+            r["file"] = r["file"].replace(stdin_tmp, "<stdin>")
+        Path(stdin_tmp).unlink(missing_ok=True)
+    if args.format == "sarif":
+        print(json.dumps(build_sarif(
+            [(r["file"], f) for r in result["results"]
+             for f in r["findings"]]), indent=2, ensure_ascii=False))
+    elif args.format == "json":
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print_docs_text(result)
@@ -1264,6 +1352,13 @@ def cmd_init(args):
 # ---------------------------------------------------------------------------
 
 def cmd_check(args):
+    stdin_tmp = None
+    if args.report == "-":
+        # Pipe composability (CONVENTIONS.md): the report arrives on
+        # stdin; evidence stays a directory (pass --evidence — without
+        # it, the current directory is used, not the temp file's).
+        stdin_tmp = _materialize_stdin(".md", "claimcheck-report-")
+        args.report = stdin_tmp
     report = Path(args.report)
     if not report.is_file():
         _print_error(f"no such report file: {report}",
@@ -1274,7 +1369,7 @@ def cmd_check(args):
                      "file_too_large")
         return 2
     evidence = Path(args.evidence) if args.evidence \
-        else report.parent
+        else (Path.cwd() if stdin_tmp else report.parent)
     if not evidence.is_dir():
         _print_error(
             f"evidence directory not found: {evidence}",
@@ -1285,7 +1380,14 @@ def cmd_check(args):
     except OSError as e:
         _print_error(f"{e}", "read_error")
         return 2
-    if args.format == "json":
+    if stdin_tmp:
+        result["report"] = "<stdin>"
+        Path(stdin_tmp).unlink(missing_ok=True)
+    if args.format == "sarif":
+        print(json.dumps(build_sarif(
+            [(result["report"], f) for f in result["findings"]]),
+            indent=2, ensure_ascii=False))
+    elif args.format == "json":
         view = dict(result)
         view["claims"] = [
             {**c, "subject": sorted(c["subject"])}
@@ -1332,11 +1434,12 @@ def main(argv=None):
 
     c = sub.add_parser("check", help="audit one report against an "
                                      "evidence directory")
-    c.add_argument("report", help="report file (.md / .txt)")
+    c.add_argument("report", help="report file (.md / .txt); "
+                                  "'-' reads the report from stdin")
     c.add_argument("--evidence",
                    help="evidence directory (default: the report's "
                         "own directory)")
-    c.add_argument("--format", choices=("text", "json"),
+    c.add_argument("--format", choices=("text", "json", "sarif"),
                    default="text")
     c.add_argument("--strict", action="store_true",
                    help="exit 1 on WARN-level (medium) findings too")
@@ -1348,8 +1451,9 @@ def main(argv=None):
                                     "sections, complete family roster")
     d.add_argument("target", help="a README file, or a directory "
                                   "searched recursively for README "
-                                  "files")
-    d.add_argument("--format", choices=("text", "json"),
+                                  "files; '-' reads one README from "
+                                  "stdin")
+    d.add_argument("--format", choices=("text", "json", "sarif"),
                    default="text")
     d.add_argument("--strict", action="store_true",
                    help="exit 1 on WARN-level (medium) findings too")
