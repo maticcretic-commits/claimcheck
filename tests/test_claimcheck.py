@@ -588,3 +588,168 @@ def test_hype_example_fails_with_all_high_classes():
             "number-mismatch"} <= checks
     assert result["summary"]["mismatch"] == 2
     assert result["summary"]["unbacked"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Family severity tiers (CONVENTIONS.md)
+# ---------------------------------------------------------------------------
+
+def test_finding_carries_tier():
+    f = finding("unbacked-claim", "high", 1, "x")
+    assert f["severity"] == "high" and f["tier"] == "HIGH"
+    f = finding("unverifiable", "medium", 1, "x")
+    assert f["tier"] == "INFO"
+    f = finding("external-url", "info", 1, "x")
+    assert f["tier"] == "INFO"
+
+
+# ---------------------------------------------------------------------------
+# docs — documentation integrity
+# ---------------------------------------------------------------------------
+
+FAMILY_LINKS = "\n".join(
+    f"[{n}](https://github.com/maticcretic-commits/{n})"
+    for n in ("agentproof", "promptre", "agentci", "secretscan",
+              "costledger", "schemaguard", "skillaudit", "promptdiff",
+              "tracetape", "promptlint", "claimcheck", "trustbadge"))
+
+GOOD_README = f"""# SomeTool
+
+A fine tool.
+
+## Install
+
+pip install sometool
+
+## Usage
+
+Run it:
+
+```bash
+sometool run
+```
+
+## Family
+
+{FAMILY_LINKS}
+
+## License
+
+MIT
+"""
+
+
+def write_readme(tmp_path, text, name="README.md"):
+    p = tmp_path / name
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def docs_json(*argv):
+    r = run_cli("docs", *argv, "--format", "json")
+    return r, json.loads(r.stdout)
+
+
+def test_docs_good_readme_passes(tmp_path):
+    p = write_readme(tmp_path, GOOD_README)
+    r, data = docs_json(str(p))
+    assert r.returncode == 0
+    assert data["tool"] == "claimcheck"
+    assert data["kind"] == "docs"
+    assert data["verdict"] == "PASS"
+    assert data["score"] == 100
+    assert data["findings"] == []
+    assert data["findings_summary"] == {"count": 0,
+                                        "highest_severity": "NONE"}
+    assert data["summary"] == {"readmes": 1, "failed": 0,
+                               "findings": 0}
+
+
+def test_docs_unbalanced_fences_fail(tmp_path):
+    p = write_readme(tmp_path,
+                     GOOD_README + "\n```python\nnever closed\n")
+    r, data = docs_json(str(p))
+    assert r.returncode == 1
+    assert data["verdict"] == "FAIL"
+    checks = {f["check"] for f in data["findings"]}
+    assert "unbalanced-fences" in checks
+    f = [f for f in data["findings"]
+         if f["check"] == "unbalanced-fences"][0]
+    assert f["severity"] == "high" and f["tier"] == "HIGH"
+    assert data["findings_summary"]["highest_severity"] == "HIGH"
+
+
+def test_docs_truncation_marker_fails(tmp_path):
+    bad = GOOD_README.replace("A fine tool.",
+                              "A fine tool...[truncated 2901 chars]")
+    p = write_readme(tmp_path, bad)
+    r, data = docs_json(str(p))
+    assert r.returncode == 1
+    assert data["verdict"] == "FAIL"
+    assert any(f["check"] == "truncation-marker"
+               for f in data["findings"])
+
+
+def test_docs_missing_sections_warn(tmp_path):
+    bad = GOOD_README.replace("## Install", "## Setup")
+    bad = bad.replace("## License", "## Legal")
+    p = write_readme(tmp_path, bad)
+    r, data = docs_json(str(p))
+    assert r.returncode == 0           # WARN does not fail by default
+    assert data["verdict"] == "WARN"
+    msgs = [f["message"] for f in data["findings"]
+            if f["check"] == "missing-section"]
+    assert any("Install" in m for m in msgs)
+    assert any("License" in m for m in msgs)
+    # --strict promotes WARN to exit 1
+    r2 = run_cli("docs", str(p), "--strict")
+    assert r2.returncode == 1
+
+
+def test_docs_missing_title_and_roster(tmp_path):
+    bad = GOOD_README.replace("# SomeTool", "SomeTool")
+    bad = bad.replace(
+        "[trustbadge](https://github.com/maticcretic-commits/"
+        "trustbadge)", "")
+    p = write_readme(tmp_path, bad)
+    r, data = docs_json(str(p))
+    checks = {f["check"] for f in data["findings"]}
+    assert "missing-title" in checks
+    assert "incomplete-roster" in checks
+    roster = [f for f in data["findings"]
+              if f["check"] == "incomplete-roster"][0]
+    assert "trustbadge" in roster["message"]
+
+
+def test_docs_quick_start_counts_as_usage(tmp_path):
+    p = write_readme(tmp_path,
+                     GOOD_README.replace("## Usage", "## Quick start"))
+    r, data = docs_json(str(p))
+    assert r.returncode == 0
+    assert data["verdict"] == "PASS"
+
+
+def test_docs_directory_collects_readmes(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    write_readme(tmp_path / "a", GOOD_README)
+    write_readme(tmp_path / "b", GOOD_README + "\n```\nunclosed\n")
+    r, data = docs_json(str(tmp_path))
+    assert r.returncode == 1
+    assert data["summary"]["readmes"] == 2
+    assert data["summary"]["failed"] == 1
+
+
+def test_docs_missing_target_is_caller_error(tmp_path):
+    r = run_cli("docs", str(tmp_path / "nope"))
+    assert r.returncode == 2
+    assert '"code": "file_not_found"' in r.stderr
+
+
+def test_docs_family_readmes_pass():
+    # The family's own 12 READMEs must pass their own gate.
+    root = Path(__file__).parent.parent.parent
+    r, data = docs_json(str(root))
+    assert r.returncode == 0
+    assert data["verdict"] == "PASS"
+    assert data["summary"]["readmes"] == 12
