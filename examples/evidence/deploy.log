@@ -1,0 +1,4 @@
+2026-10-20T09:31:04 deploy started: billing-dashboard v1.4.0
+2026-10-20T09:31:19 build ok
+2026-10-20T09:31:26 health check ok — service responding
+2026-10-20T09:31:26 deploy finished successfully
