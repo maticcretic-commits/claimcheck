@@ -1,27 +1,54 @@
 # ClaimCheck 📋
 
-**Show your work.**
+**Agent reports make claims. “38 tests passed.” “Deployed successfully.” Some have evidence behind them, and some are confident narrative wearing a number as a costume — and nothing in the report tells you which is which.**
 
-Agent reports make claims. "38 tests passed." "3 files changed."
-"Deployed successfully." Some of those claims have evidence behind
-them, and some are confident narrative wearing a number as a
-costume. Nothing in the report tells you which is which — until
-someone opens the folder and checks by hand.
+ClaimCheck audits a report against its evidence folder: every checkable claim must point at an artifact, every referenced artifact must exist, and every number the report claims must match the artifact it cites. Claims with nothing behind them fail the audit — loudly, with line numbers.
 
-ClaimCheck is that check, automated. It audits a report against
-its evidence folder: every checkable claim must point at an
-artifact, every referenced artifact must exist, and every number
-the report claims must match the artifact it cites. Claims with
-nothing behind them fail the audit — loudly, with line numbers.
-
-Offline and dependency-free: stdlib-only Python, no network, no
-account, fully deterministic. Same report, same verdict, every
-time. ClaimCheck never fetches a URL.
+*Part of **AgentForge** — verify AI-agent work before you ship it.*
+*The family: [AgentProof](https://github.com/maticcretic-commits/agentproof) · [PromptRE](https://github.com/maticcretic-commits/promptre) · [AgentCI](https://github.com/maticcretic-commits/agentci) · [SecretScan](https://github.com/maticcretic-commits/secretscan) · [CostLedger](https://github.com/maticcretic-commits/costledger) · [SchemaGuard](https://github.com/maticcretic-commits/schemaguard) · [SkillAudit](https://github.com/maticcretic-commits/skillaudit) · [PromptDiff](https://github.com/maticcretic-commits/promptdiff) · [TraceTape](https://github.com/maticcretic-commits/tracetape) · [PromptLint](https://github.com/maticcretic-commits/promptlint) · [ClaimCheck](https://github.com/maticcretic-commits/claimcheck) · [TrustBadge](https://github.com/maticcretic-commits/trustbadge)*
 
 ```bash
-python src/claimcheck.py check report.md --evidence evidence/
-python src/claimcheck.py check report.md --evidence evidence/ --strict
-python src/claimcheck.py check report.md --evidence evidence/ --format json
+$ claimcheck check examples/report-hype.md --evidence examples/evidence
+```
+
+```
+====================================================================
+ClaimCheck — report audit
+====================================================================
+Report:   examples/report-hype.md
+Evidence: examples/evidence
+Claims:   3 found — 0 verified, 0 backed, 1 unbacked, 2 mismatched, 0 unverifiable, 0 URL-only
+Findings: 6
+Score:    28/100 — ❌ FAIL
+
+## number-mismatch
+  line 7    🟠 HIGH   Number mismatch — the claim says 120, but the evidence says: pytest.log records 37 passed, not 120.
+             Headline result: 120 tests passed — see `evidence/pytest.log`.
+  line 13   🟠 HIGH   Number mismatch — the claim says 120, but the evidence says: counts.json records tests_passed=37, tests_total=37, not 120.
+             Run totals in `evidence/counts.json`: 120 tests passed.
+
+❌ FAIL — 4 high finding(s). Every claim must show its work.
+```
+
+*Exit code 1 — 28/100 FAIL: the report claims 120 tests passed; its own evidence says 37. The bundled backed report scores 100/100 PASS.*
+
+## Install
+
+```bash
+pipx install git+https://github.com/maticcretic-commits/claimcheck
+# or, into the current environment:
+pip install git+https://github.com/maticcretic-commits/claimcheck
+```
+
+Then run it as `claimcheck …` (Python 3.9+, no dependencies — stdlib only).
+PyPI release planned; until then, the git URL above is the install path.
+
+From source — it is a single file, so no install is needed at all:
+
+```bash
+git clone https://github.com/maticcretic-commits/claimcheck
+cd claimcheck
+python src/claimcheck.py …
 ```
 
 ## The commands
@@ -193,10 +220,28 @@ Score:    28/100 — ❌ FAIL
   line 13   🟡 MEDIUM Stale evidence — 'counts.json' was recorded 2026-10-20 (per evidence-manifest.json), before the report's date 2026
 ```
 
+## Exit codes & JSON output
+
+All AgentForge tools share one contract (full text in
+[CONVENTIONS.md](CONVENTIONS.md)):
+
+| Code | Meaning |
+|------|---------|
+| `0` | Clean / PASS — no findings at or above the tool's fail threshold |
+| `1` | Findings / FAIL — the tool ran fine; the answer is “no” |
+| `2` | Caller error — bad arguments, missing or unreadable input |
+| `3` | Environment error — the tool itself could not run |
+
+On a caller error the tool also prints one JSON line to stderr:
+`{"error": {"code": "file_not_found", "message": "no such file: x"}}`.
+
+JSON output (`--format json`) always carries the family envelope —
+`{"tool": "claimcheck", "version": "1.0.0", "schema_version": 1}` — alongside
+the tool's own payload keys, unchanged.
+
 ## Part of AgentForge
 
-ClaimCheck is the eleventh tool in the [AgentForge](https://github.com/maticcretic-commits)
-trust layer for AI agents:
+ClaimCheck is one of the 12 tools in the [AgentForge](https://github.com/maticcretic-commits) family — offline, stdlib-only tools to **verify AI-agent work before you ship it**:
 
 - **AgentProof** — verify agent work — [github.com/maticcretic-commits/agentproof](https://github.com/maticcretic-commits/agentproof)
 - **PromptRE** — reverse-engineer agent prompts — [github.com/maticcretic-commits/promptre](https://github.com/maticcretic-commits/promptre)
