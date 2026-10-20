@@ -991,6 +991,12 @@ and watch ClaimCheck fail the report. That failure is the tool.
 """
 
 
+def _print_error(message, code):
+    print(f"error: {message}", file=sys.stderr)
+    print(json.dumps({"error": {"code": code, "message": message}}),
+          file=sys.stderr)
+
+
 def cmd_init(args):
     base = Path(args.dir) if args.dir else Path(".")
     ev = base / "evidence"
@@ -1005,8 +1011,9 @@ def cmd_init(args):
     manifest_path = ev / MANIFEST_NAME
     for dest in list(files) + [manifest_path]:
         if dest.exists() and not args.force:
-            print(f"error: {dest} exists (use --force to overwrite)",
-                  file=sys.stderr)
+            _print_error(
+                f"{dest} exists (use --force to overwrite)",
+                "already_exists")
             return 2
     ev.mkdir(parents=True, exist_ok=True)
     for dest, content in files.items():
@@ -1036,30 +1043,46 @@ def cmd_init(args):
 def cmd_check(args):
     report = Path(args.report)
     if not report.is_file():
-        print(f"error: no such report file: {report}",
-              file=sys.stderr)
+        _print_error(f"no such report file: {report}",
+                     "file_not_found")
         return 2
     if report.stat().st_size > MAX_FILE_BYTES:
-        print(f"error: report too large: {report}", file=sys.stderr)
+        _print_error(f"report too large: {report}",
+                     "file_too_large")
         return 2
     evidence = Path(args.evidence) if args.evidence \
         else report.parent
     if not evidence.is_dir():
-        print(f"error: evidence directory not found: {evidence}",
-              file=sys.stderr)
+        _print_error(
+            f"evidence directory not found: {evidence}",
+            "evidence_not_found")
         return 2
     try:
         result = audit_report(report, evidence)
     except OSError as e:
-        print(f"error: {e}", file=sys.stderr)
+        _print_error(f"{e}", "read_error")
         return 2
     if args.format == "json":
         view = dict(result)
         view["claims"] = [
             {**c, "subject": sorted(c["subject"])}
             for c in result["claims"]]
+        counts = result["counts"]
+        if counts.get("critical", 0) > 0:
+            highest = "CRITICAL"
+        elif counts.get("high", 0) > 0:
+            highest = "HIGH"
+        elif result["findings"]:
+            highest = "INFO"
+        else:
+            highest = "NONE"
         print(json.dumps(
-            {"tool": "claimcheck", "version": VERSION, **view},
+            {"tool": "claimcheck", "version": VERSION,
+             "schema_version": 1,
+             "findings_summary": {
+                 "count": len(result["findings"]),
+                 "highest_severity": highest},
+             **view},
             indent=2, ensure_ascii=False, default=str))
     else:
         print_check_text(result)
@@ -1077,6 +1100,11 @@ def main(argv=None):
                     "folder — every checkable claim must point at "
                     "an artifact, every artifact must exist, and "
                     "every number must match. Show your work.")
+    ap.add_argument("--version", action="version",
+                    version=f"claimcheck {VERSION}")
+    ap.add_argument("--no-color", action="store_true",
+                    help="disable ANSI color output (this tool "
+                         "emits no color; accepted harmlessly)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("check", help="audit one report against an "
