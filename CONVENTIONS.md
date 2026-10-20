@@ -109,6 +109,71 @@ see the dogfood gate below.
   harmlessly.)
 - `-h` / `--help` is help only.
 
+## SARIF output
+
+The six finding-type tools (secretscan, schemaguard, skillaudit,
+claimcheck, promptlint, promptdiff) accept `--format sarif` and emit
+a SARIF 2.1.0 log on stdout — the shape GitHub code scanning and
+other SARIF consumers ingest:
+
+- `version: "2.1.0"` + `$schema`; one run; `tool.driver` carries the
+  tool name, version, `informationUri` (the repo URL) and `rules[]`
+  derived from the tool's check ids.
+- `results[]` map one-to-one from findings: `ruleId` = the check id,
+  `message` = the finding's message, `locations[0]` = the finding's
+  file (`artifactLocation.uri`) plus `region.startLine` when the
+  finding has a line.
+- `level` follows the severity tiers: CRITICAL/HIGH → `error`,
+  native medium → `warning`, low/info → `note`.
+- SARIF is a rendering of the same verdict: exit codes are identical
+  to text/JSON mode, and secret values are never copied into the log
+  (SecretScan reports the detector's type label only).
+
+## Pipe composability (stdin in, JSON out)
+
+Tools compose in shell pipelines: JSON/SARIF modes write ONLY the
+JSON document to stdout (progress, warnings and errors go to stderr,
+errors as the envelope above), and a file argument of `-` reads that
+input from stdin, labelled `<stdin>` in output. stdin can be read
+once, so in two-input commands at most one side may be `-` (a second
+`-` is a caller error, exit 2).
+
+| Command | stdin (`-`) |
+|---|---|
+| `promptre analyze` | one prompt text |
+| `promptlint lint` | one prompt text |
+| `promptdiff diff` / `stats` | one diff side / one prompt |
+| `secretscan scan` | text to scan |
+| `tracetape validate` / `summary` | one tape (validated in memory) |
+| `costledger tally` / `budget` | one log stream (JSON or JSONL) |
+| `schemaguard validate` | one JSON document or JSONL stream of outputs (the `--schema` stays a file — stdin is read once) |
+| `schemaguard diff` | one schema side |
+| `agentci run` / `compare` | one of the two JSON inputs |
+| `skillaudit audit` | a lone SKILL.md, audited as a one-file skill |
+| `claimcheck check` | the report (evidence stays a directory; without `--evidence`, the current directory is used) |
+| `claimcheck docs` | one README |
+
+Not applicable, by construction:
+
+- `agentproof check` — verifies the current repo's working tree and
+  runs a test command; it has no primary file input.
+- `secretscan redact` — writes redacted copies of a file/tree to
+  disk; a stream has no tree to mirror.
+- `costledger compare` — both inputs are saved ledger artifacts.
+- `schemaguard snapshot` — infers a baseline from a corpus of output
+  files on disk.
+- `skillaudit audit-all` — the target is a directory of skill dirs.
+- `trustbadge aggregate` / `badge` — the input is a directory of
+  sibling report files; one stream cannot carry the report set.
+
+Pipeline pattern:
+
+```bash
+cat trace.jsonl | tracetape validate - --format json
+cat agent-output.md | secretscan scan - --format sarif
+cat new-prompt.md | promptdiff diff old.md - --fail-on-risk
+```
+
 ## Fixture policy — no literal secrets, ever
 
 - No literal secret-shaped string may appear anywhere in a repo: source,
