@@ -16,6 +16,7 @@ for trivial work — what it cannot do is pass with claims that
 have nothing behind them.
 
     claimcheck check <report> --evidence <dir> [--strict]
+    claimcheck docs <readme-or-dir>
     claimcheck init
 
 Exit codes: 0 = PASS / WARN (with --strict: no medium-or-worse
@@ -59,8 +60,19 @@ CHECK_CATEGORY = {
 }
 
 
+# Family severity tiers (see CONVENTIONS.md): critical -> CRITICAL,
+# high -> HIGH, medium/low/info -> INFO. Findings carry both labels.
+SEVERITY_TIER = {"critical": "CRITICAL", "high": "HIGH",
+                 "medium": "INFO", "low": "INFO", "info": "INFO"}
+
+
+def severity_tier(severity):
+    return SEVERITY_TIER.get(str(severity).lower(), "INFO")
+
+
 def finding(check, severity, line, message, snippet=""):
     return {"check": check, "severity": severity,
+            "tier": severity_tier(severity),
             "category": CHECK_CATEGORY[check], "line": line,
             "message": message, "snippet": snippet}
 
@@ -921,6 +933,217 @@ def print_check_text(result):
 
 
 # ---------------------------------------------------------------------------
+# Documentation integrity (`docs`)
+#
+# A README is a claim surface too: the family once shipped one that was
+# truncated mid-example with the cut marker baked in. `docs` checks the
+# mechanical integrity of README files — balanced code fences, no
+# truncation markers, the required sections, and a complete family
+# roster. It judges structure, never prose quality.
+# ---------------------------------------------------------------------------
+
+FAMILY_REPOS = [
+    "agentproof", "promptre", "agentci", "secretscan", "costledger",
+    "schemaguard", "skillaudit", "promptdiff", "tracetape",
+    "promptlint", "claimcheck", "trustbadge",
+]
+FAMILY_REPO_URL = "github.com/maticcretic-commits/"
+TRUNCATION_MARKERS = ("[truncated", "…[truncated", "...[truncated")
+DOC_SKIP_PARTS = {".git", "__pycache__", "node_modules", "build"}
+
+
+def doc_finding(check, severity, message, line=None):
+    return {"check": check, "severity": severity,
+            "tier": severity_tier(severity), "category": "docs",
+            "line": line, "message": message, "snippet": ""}
+
+
+def _headings_outside_fences(lines):
+    """(headings, unclosed) — headings are (lineno, level, text) for
+    ATX headings outside fenced code blocks."""
+    headings = []
+    fenced = False
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if m:
+            headings.append((lineno, len(m.group(1)),
+                             m.group(2).strip()))
+    return headings, fenced
+
+
+def audit_readme(path):
+    """Check one README file's documentation integrity."""
+    path = Path(path)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    findings = []
+    headings, unclosed = _headings_outside_fences(lines)
+    if unclosed:
+        findings.append(doc_finding(
+            "unbalanced-fences", "high",
+            "A ``` fence is opened but never closed — everything "
+            "after it renders as code, swallowing the rest of the "
+            "document."))
+    for marker in TRUNCATION_MARKERS:
+        idx = text.find(marker)
+        if idx >= 0:
+            findings.append(doc_finding(
+                "truncation-marker", "high",
+                f"Truncation marker '{marker}' baked into the "
+                "document — the file was cut off mid-content when "
+                "it was written; whatever followed is missing.",
+                text[:idx].count("\n") + 1))
+            break
+    if not any(level == 1 for _, level, _ in headings):
+        findings.append(doc_finding(
+            "missing-title", "medium",
+            "No top-level '# ' title heading."))
+
+    def has_section(*words):
+        return any(any(w in text_.lower() for w in words)
+                   for _, _, text_ in headings)
+
+    if not has_section("install"):
+        findings.append(doc_finding(
+            "missing-section", "medium",
+            "No Install section (a heading containing 'Install')."))
+    if not has_section("usage", "quick start"):
+        findings.append(doc_finding(
+            "missing-section", "medium",
+            "No Usage section (a heading containing 'Usage' or "
+            "'Quick start')."))
+    if not has_section("license"):
+        findings.append(doc_finding(
+            "missing-section", "medium",
+            "No License section (a heading containing 'License')."))
+    missing = [name for name in FAMILY_REPOS
+               if not re.search(
+                   re.escape(FAMILY_REPO_URL + name) + r"(?![a-z0-9-])",
+                   text)]
+    if missing:
+        findings.append(doc_finding(
+            "incomplete-roster", "medium",
+            "Family roster is incomplete — no link to: "
+            + ", ".join(missing) + "."))
+    return {
+        "file": str(path),
+        "findings": findings,
+        "counts": {sev: sum(1 for f in findings
+                            if f["severity"] == sev)
+                   for sev in SEVERITY_RANK},
+        "score": compute_score(findings),
+        "verdict": compute_verdict(findings),
+    }
+
+
+def collect_readmes(target):
+    """A single file, or every README under a directory (recursive;
+    generated-artifact dirs are skipped)."""
+    target = Path(target)
+    if target.is_file():
+        return [target]
+    found = []
+    for p in sorted(target.rglob("*")):
+        if not p.is_file():
+            continue
+        if not p.name.lower().startswith("readme"):
+            continue
+        rel_parts = p.relative_to(target).parts[:-1]
+        if any(part in DOC_SKIP_PARTS or part.startswith(".")
+               or part.endswith(".egg-info") for part in rel_parts):
+            continue
+        found.append(p)
+    return found
+
+
+def print_docs_text(result):
+    print("=" * 68)
+    print("ClaimCheck — documentation integrity")
+    print("=" * 68)
+    print(f"Target:  {result['target']}")
+    s = result["summary"]
+    print(f"READMEs: {s['readmes']} checked · {s['failed']} failing · "
+          f"{s['findings']} finding(s)")
+    print(f"Score:   {result['score']}/100 (worst README governs) — "
+          f"{VERDICT_EMOJI[result['verdict']]} {result['verdict']}")
+    for r in result["results"]:
+        icon = VERDICT_EMOJI[r["verdict"]]
+        print(f"\n{icon} {r['file']} — {r['verdict']}")
+        for f in r["findings"]:
+            where = f"line {f['line']}" if f["line"] else "file"
+            print(f"  {where:<9} {SEVERITY_EMOJI[f['severity']]} "
+                  f"{f['severity'].upper():<6} [{f['check']}] "
+                  f"{f['message']}")
+    if result["verdict"] == "FAIL":
+        print("\n❌ FAIL — a README is mechanically broken (unclosed "
+              "fence or truncation marker).")
+    elif result["verdict"] == "WARN":
+        print("\n⚠️ WARN — no broken READMEs, but required sections "
+              "or roster links are missing.")
+    else:
+        print("\n✅ PASS — every README is mechanically sound.")
+
+
+def cmd_docs(args):
+    target = Path(args.target)
+    if not target.exists():
+        _print_error(f"no such file or directory: {target}",
+                     "file_not_found")
+        return 2
+    files = collect_readmes(target)
+    if not files:
+        _print_error(f"no README files found under {target}",
+                     "no_readmes")
+        return 2
+    results = []
+    for f in files:
+        try:
+            results.append(audit_readme(f))
+        except OSError as e:
+            _print_error(f"{e}", "read_error")
+            return 2
+    all_findings = [f for r in results for f in r["findings"]]
+    verdict = compute_verdict(all_findings)
+    score = min(r["score"] for r in results)
+    if any(f["severity"] == "high" for f in all_findings):
+        highest = "HIGH"
+    elif all_findings:
+        highest = "INFO"
+    else:
+        highest = "NONE"
+    result = {
+        "tool": "claimcheck", "version": VERSION, "schema_version": 1,
+        "kind": "docs",
+        "findings_summary": {"count": len(all_findings),
+                             "highest_severity": highest},
+        "target": str(target),
+        "results": results,
+        "findings": all_findings,
+        "summary": {"readmes": len(results),
+                    "failed": sum(1 for r in results
+                                  if r["verdict"] == "FAIL"),
+                    "findings": len(all_findings)},
+        "score": score,
+        "verdict": verdict,
+    }
+    if args.format == "json":
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print_docs_text(result)
+    if verdict == "FAIL":
+        return 1
+    if args.strict and verdict == "WARN":
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # init scaffold
 # ---------------------------------------------------------------------------
 
@@ -1118,6 +1341,19 @@ def main(argv=None):
     c.add_argument("--strict", action="store_true",
                    help="exit 1 on WARN-level (medium) findings too")
     c.set_defaults(fn=cmd_check)
+
+    d = sub.add_parser("docs", help="check README documentation "
+                                    "integrity — balanced fences, no "
+                                    "truncation markers, required "
+                                    "sections, complete family roster")
+    d.add_argument("target", help="a README file, or a directory "
+                                  "searched recursively for README "
+                                  "files")
+    d.add_argument("--format", choices=("text", "json"),
+                   default="text")
+    d.add_argument("--strict", action="store_true",
+                   help="exit 1 on WARN-level (medium) findings too")
+    d.set_defaults(fn=cmd_docs)
 
     i = sub.add_parser("init", help="scaffold a sample backed "
                                     "report + evidence folder + "
