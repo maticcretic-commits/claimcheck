@@ -1,0 +1,9 @@
+============================= test session starts ==============================
+platform linux -- python 3.12, pytest-9.1.1
+collected 37 items
+
+tests/test_api.py ..........                                       [ 27%]
+tests/test_billing.py ..............                               [ 64%]
+tests/test_reports.py .............                                [100%]
+
+============================== 37 passed in 0.42s ==============================
