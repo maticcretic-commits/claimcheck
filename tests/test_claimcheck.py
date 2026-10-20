@@ -747,12 +747,20 @@ def test_docs_missing_target_is_caller_error(tmp_path):
 
 
 def test_docs_family_readmes_pass():
-    # The family's own 12 READMEs must pass their own gate.
+    # The family's own READMEs must pass their own gate: all 12 tool
+    # READMEs, plus any family README added since (the .github
+    # profile/index repo added two in Phase 2) — every one sound.
     root = Path(__file__).parent.parent.parent
     r, data = docs_json(str(root))
     assert r.returncode == 0
     assert data["verdict"] == "PASS"
-    assert data["summary"]["readmes"] == 12
+    parents = {Path(res["file"]).parent.name
+               for res in data["results"]}
+    tools = {"agentproof", "promptre", "agentci", "secretscan",
+             "costledger", "schemaguard", "skillaudit", "promptdiff",
+             "tracetape", "promptlint", "claimcheck", "trustbadge"}
+    assert tools <= parents
+    assert data["summary"]["readmes"] >= 12
 
 
 # ---------------------------------------------------------------------------
