@@ -753,3 +753,88 @@ def test_docs_family_readmes_pass():
     assert r.returncode == 0
     assert data["verdict"] == "PASS"
     assert data["summary"]["readmes"] == 12
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: SARIF output + stdin inputs
+# ---------------------------------------------------------------------------
+
+EXAMPLES_CC = Path(__file__).parent.parent / "examples"
+
+
+def assert_sarif_shape(doc, tool_name):
+    """SARIF 2.1.0 top-level required fields (structure assertion)."""
+    assert doc["version"] == "2.1.0"
+    assert doc["$schema"].endswith("sarif-2.1.0.json")
+    assert len(doc["runs"]) == 1
+    run = doc["runs"][0]
+    driver = run["tool"]["driver"]
+    assert driver["name"] == tool_name
+    assert driver["version"]
+    assert driver["informationUri"].startswith(
+        "https://github.com/maticcretic-commits/")
+    rule_ids = {r["id"] for r in driver["rules"]}
+    for res in run["results"]:
+        assert res["ruleId"] in rule_ids
+        assert res["level"] in ("error", "warning", "note", "none")
+        assert res["message"]["text"]
+    return run
+
+
+def test_sarif_check_hype_report():
+    js = run_cli("check", str(EXAMPLES_CC / "report-hype.md"),
+                 "--evidence", str(EXAMPLES_CC / "evidence"),
+                 "--format", "json")
+    assert js.returncode == 1
+    n_findings = len(json.loads(js.stdout)["findings"])
+    proc = run_cli("check", str(EXAMPLES_CC / "report-hype.md"),
+                   "--evidence", str(EXAMPLES_CC / "evidence"),
+                   "--format", "sarif")
+    assert proc.returncode == 1  # same verdict as text/json
+    run = assert_sarif_shape(json.loads(proc.stdout), "claimcheck")
+    assert len(run["results"]) == n_findings
+    assert any(r["level"] == "error" for r in run["results"])
+    loc = run["results"][0]["locations"][0]["physicalLocation"]
+    assert loc["artifactLocation"]["uri"].endswith("report-hype.md")
+
+
+def test_sarif_docs_on_family_readme(tmp_path):
+    good = tmp_path / "README.md"
+    good.write_text((Path(__file__).parent.parent / "README.md")
+                    .read_text())
+    proc = run_cli("docs", str(good), "--format", "sarif")
+    assert proc.returncode == 0
+    run = assert_sarif_shape(json.loads(proc.stdout), "claimcheck")
+    assert run["results"] == []
+    broken = tmp_path / "README-broken.md"
+    broken.write_text("# T\n\n```\nunclosed fence\n")
+    proc = run_cli("docs", str(broken), "--format", "sarif")
+    assert proc.returncode == 1
+    run = assert_sarif_shape(json.loads(proc.stdout), "claimcheck")
+    rules = {r["ruleId"] for r in run["results"]}
+    assert "unbalanced-fences" in rules
+    assert any(r["level"] == "error" for r in run["results"])
+
+
+def test_check_stdin_report():
+    text = (EXAMPLES_CC / "report-hype.md").read_text()
+    proc = subprocess.run(
+        [sys.executable, str(CLI), "check", "-",
+         "--evidence", str(EXAMPLES_CC / "evidence"),
+         "--format", "json"],
+        input=text, capture_output=True, text=True)
+    assert proc.returncode == 1
+    data = json.loads(proc.stdout)  # stdout is pure JSON
+    assert data["report"] == "<stdin>"
+    assert data["verdict"] == "FAIL"
+
+
+def test_docs_stdin_readme():
+    text = (Path(__file__).parent.parent / "README.md").read_text()
+    proc = subprocess.run(
+        [sys.executable, str(CLI), "docs", "-", "--format", "json"],
+        input=text, capture_output=True, text=True)
+    assert proc.returncode == 0
+    data = json.loads(proc.stdout)
+    assert data["target"] == "<stdin>"
+    assert data["verdict"] == "PASS"
