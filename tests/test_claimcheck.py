@@ -522,6 +522,63 @@ def test_good_example_passes():
     assert result["summary"]["backed"] == 1
 
 
+def _stderr_error_envelope(stderr):
+    lines = [ln for ln in stderr.splitlines() if ln.strip()]
+    assert lines[0].startswith("error: ")
+    return json.loads(lines[-1])["error"]
+
+
+def test_json_envelope_on_good_example():
+    r = run_cli("check", str(EXAMPLES / "report-good.md"),
+                "--evidence", str(EXAMPLES / "evidence"),
+                "--format", "json")
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert data["schema_version"] == 1
+    assert isinstance(data["schema_version"], int)
+    assert data["findings_summary"]["count"] == len(data["findings"])
+    # good example: 1 info finding, no high/critical -> INFO
+    assert data["findings_summary"]["highest_severity"] == "INFO"
+
+
+def test_json_envelope_hype_highest_severity():
+    r = run_cli("check", str(EXAMPLES / "report-hype.md"),
+                "--evidence", str(EXAMPLES / "evidence"),
+                "--format", "json")
+    assert r.returncode == 1
+    data = json.loads(r.stdout)
+    assert data["schema_version"] == 1
+    assert data["findings_summary"]["count"] == len(data["findings"])
+    # hand-verified from counts: high == 4 (>0), no critical -> HIGH
+    assert data["counts"]["high"] == 4
+    assert data["findings_summary"]["highest_severity"] == "HIGH"
+
+
+def test_cli_version():
+    r = run_cli("--version")
+    assert r.returncode == 0
+    assert r.stdout.strip() == "claimcheck 1.0.0"
+
+
+def test_cli_missing_report_error_envelope(tmp_path):
+    r = run_cli("check", str(tmp_path / "nope.md"),
+                "--evidence", str(tmp_path))
+    assert r.returncode == 2
+    err = _stderr_error_envelope(r.stderr)
+    assert err["code"] == "file_not_found"
+    assert "no such report file" in err["message"]
+
+
+def test_cli_missing_evidence_error_envelope(tmp_path):
+    report, _ev = make_case(tmp_path, "hello\n")
+    r = run_cli("check", str(report), "--evidence",
+                str(tmp_path / "no-such-dir"))
+    assert r.returncode == 2
+    err = _stderr_error_envelope(r.stderr)
+    assert err["code"] == "evidence_not_found"
+    assert "evidence directory not found" in err["message"]
+
+
 def test_hype_example_fails_with_all_high_classes():
     result = audit_report(EXAMPLES / "report-hype.md",
                           EXAMPLES / "evidence")
