@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claimcheck"
+version = "1.0.0"
+description = "Audit an agent report against its evidence folder — every checkable claim must point at an artifact, every artifact must exist, and every number must match. Show your work."
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[project.scripts]
+claimcheck = "claimcheck:main"
+
+[tool.setuptools]
+py-modules = ["claimcheck"]
+package-dir = {"" = "src"}
