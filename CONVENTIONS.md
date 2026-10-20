@@ -68,6 +68,39 @@ Finding-based tools additionally include an optional standardized summary:
 Consumers (notably TrustBadge) read the envelope as a fast path and fall back
 to payload-specific parsing for older reports.
 
+## Severity tiers
+
+Every finding carries TWO labels in JSON output: the tool's native
+`severity` (unchanged, tool-specific vocabulary) and a family `tier`
+— the mapping is additive, consumers may use either.
+
+| Tier | Meaning |
+|------|---------|
+| `CRITICAL` | Act now: a real secret, a hostile instruction, a broken contract on a blocking path |
+| `HIGH` | Fails the gate: must be fixed or explicitly allow-listed |
+| `INFO` | Reported, never fatal: hygiene, candidates, inventory |
+
+Per-tool mapping (native → tier):
+
+| Tool | CRITICAL | HIGH | INFO |
+|------|----------|------|------|
+| SecretScan | critical | high | medium, low |
+| SkillAudit | critical | high | medium, low, info |
+| ClaimCheck | — | high | medium, low, info |
+| PromptLint | — | high | medium, low, info |
+| PromptDiff | — | high (risks) | medium, low (risks) |
+| SchemaGuard | — | contract violations (validate errors, breaking diff changes) | unsupported-keyword warnings, non-breaking changes |
+
+SchemaGuard's per-item records carry no native severity field, so its
+mapping lives at the summary level: `findings_summary.highest_severity`
+is `HIGH` when any output violates the contract (or a diff change is
+breaking), `INFO` when only warnings/non-breaking changes exist.
+For every tool, `findings_summary.highest_severity` is the tier of
+the worst finding (`NONE` when there are no findings).
+
+Family green means: **no un-allowed CRITICAL or HIGH finding** —
+see the dogfood gate below.
+
 ## CLI flags
 
 - `--version` prints `<tool> <version>` and exits 0.
@@ -90,3 +123,54 @@ to payload-specific parsing for older reports.
 - Family check: grep every repo for secret-shaped literals before a release
   (and run SecretScan on each tool's own `src/` — it must report zero
   findings on itself).
+
+## Dogfood allow-list (expiring)
+
+Intentional findings — a fixture that exists to be caught, a sample
+that demonstrates a failure — are suppressed ONLY through the
+family allow-list, never by editing a tool to look away. The list
+lives at `agentforge/dogfood-allowlist.json` (family workspace, not
+in any repo):
+
+```json
+{"entries": [
+  {"tool": "secretscan",
+   "target": "secretscan/examples/agent-output-with-secrets.md",
+   "finding": "*",
+   "reason": "Deliberate bad-example fixture …",
+   "expires": "2027-01-15"}
+]}
+```
+
+- `tool`: the tool whose finding is suppressed.
+- `target`: a repo name, a repo-relative path, or a glob — matched
+  against the run target and the finding's file.
+- `finding`: a check id, a substring of the finding's type/message,
+  or `"*"` for every finding in the target.
+- `reason`: why this finding is intentional. Required, human.
+- `expires`: an ISO date (entry lapses after that date) or a commit
+  sha (entry holds only while the target repo's HEAD is exactly
+  that sha; an unverifiable HEAD counts as lapsed — fail-closed).
+
+An entry suppresses a matching CRITICAL/HIGH finding only while
+unexpired. Expired entries are reported loudly by the gate on every
+run, and relying on an expired entry fails the gate.
+
+## Dogfood gate
+
+`agentforge/dogfood.py` runs the family against itself before any
+release or badge publish:
+
+- SecretScan over every repo's `src/` + `examples/` + `README.md`;
+- ClaimCheck `docs` over all 12 READMEs (balanced fences, no
+  truncation markers, required sections — title, Install, Usage,
+  License — and a complete family roster);
+- PromptLint over the family's example prompts; SkillAudit over
+  SKILL.md fixtures in siblings' examples;
+- every tool against its own bundled examples, asserting the exit
+  code its README states.
+
+The gate writes `agentforge/dogfood-report.json` and exits 1 when
+any un-allowed CRITICAL/HIGH finding appears, any tool errors, any
+expected exit code mismatches, or an expired allow-list entry is
+relied on. INFO findings are reported, never fatal.
