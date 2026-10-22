@@ -144,7 +144,8 @@ once, so in two-input commands at most one side may be `-` (a second
 | `promptlint lint` | one prompt text |
 | `promptdiff diff` / `stats` | one diff side / one prompt |
 | `secretscan scan` | text to scan |
-| `tracetape validate` / `summary` | one tape (validated in memory) |
+| `tracetape validate` / `summary` / `handoffs` | one tape (validated in memory) |
+| `agentci bundle` | one of the two bundle JSON inputs |
 | `costledger tally` / `budget` | one log stream (JSON or JSONL) |
 | `schemaguard validate` | one JSON document or JSONL stream of outputs (the `--schema` stays a file — stdin is read once) |
 | `schemaguard diff` | one schema side |
@@ -165,6 +166,11 @@ Not applicable, by construction:
 - `skillaudit audit-all` — the target is a directory of skill dirs.
 - `trustbadge aggregate` / `badge` — the input is a directory of
   sibling report files; one stream cannot carry the report set.
+- `tracetape bundle` — seals evidence files named on the command
+  line; the bundle records their paths, so a stream has no identity
+  to seal.
+- `tracetape verify` — re-reads the sealed sibling files next to
+  the bundle; a stream has no siblings.
 
 Pipeline pattern:
 
