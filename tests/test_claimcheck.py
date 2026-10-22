@@ -557,7 +557,7 @@ def test_json_envelope_hype_highest_severity():
 def test_cli_version():
     r = run_cli("--version")
     assert r.returncode == 0
-    assert r.stdout.strip() == "claimcheck 1.0.0"
+    assert r.stdout.strip() == "claimcheck 1.0.1"
 
 
 def test_cli_missing_report_error_envelope(tmp_path):
@@ -738,6 +738,20 @@ def test_docs_directory_collects_readmes(tmp_path):
     assert r.returncode == 1
     assert data["summary"]["readmes"] == 2
     assert data["summary"]["failed"] == 1
+
+
+def test_docs_skips_examples_fixture_readmes(tmp_path):
+    # Fixture documentation under examples/ is not a tool README and
+    # must not be swept into the docs gate (regression: agentproof's
+    # examples/ci-matrix/README.md broke the family-wide docs test).
+    (tmp_path / "examples" / "ci-matrix").mkdir(parents=True)
+    write_readme(tmp_path / "examples" / "ci-matrix",
+                 "# Fixture notes\n\nNo sections here.\n")
+    write_readme(tmp_path, GOOD_README)
+    r, data = docs_json(str(tmp_path))
+    assert r.returncode == 0
+    assert data["verdict"] == "PASS"
+    assert data["summary"]["readmes"] == 1
 
 
 def test_docs_missing_target_is_caller_error(tmp_path):
