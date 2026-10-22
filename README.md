@@ -236,7 +236,7 @@ On a caller error the tool also prints one JSON line to stderr:
 `{"error": {"code": "file_not_found", "message": "no such file: x"}}`.
 
 JSON output (`--format json`) always carries the family envelope —
-`{"tool": "claimcheck", "version": "1.0.0", "schema_version": 1}` — alongside
+`{"tool": "claimcheck", "version": "1.0.1", "schema_version": 1}` — alongside
 the tool's own payload keys, unchanged.
 
 ## Part of AgentForge
