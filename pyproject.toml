@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claimcheck"
-version = "1.0.0"
+version = "1.0.1"
 description = "Audit an agent report against its evidence folder — every checkable claim must point at an artifact, every artifact must exist, and every number must match. Show your work."
 requires-python = ">=3.9"
 license = {text = "MIT"}
