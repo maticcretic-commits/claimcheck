@@ -36,7 +36,7 @@ import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 MAX_FILE_BYTES = 5_000_000
 MANIFEST_NAME = "evidence-manifest.json"
@@ -951,7 +951,8 @@ FAMILY_REPOS = [
 ]
 FAMILY_REPO_URL = "github.com/maticcretic-commits/"
 TRUNCATION_MARKERS = ("[truncated", "…[truncated", "...[truncated")
-DOC_SKIP_PARTS = {".git", "__pycache__", "node_modules", "build"}
+DOC_SKIP_PARTS = {".git", "__pycache__", "node_modules", "build",
+                  "examples"}
 
 
 def doc_finding(check, severity, message, line=None):
@@ -1046,7 +1047,8 @@ def audit_readme(path):
 
 def collect_readmes(target):
     """A single file, or every README under a directory (recursive;
-    generated-artifact dirs are skipped)."""
+    generated-artifact dirs and examples/ fixture trees are skipped —
+    the docs gate governs tool READMEs, not fixture documentation)."""
     target = Path(target)
     if target.is_file():
         return [target]
